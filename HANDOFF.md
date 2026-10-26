@@ -4,6 +4,8 @@ Variante do AudioServ criada em 26/10/2026 para gravar enquanto o usuário mant�
 
 Destino de implantação: https://host.simserv.com.br/audiocontinuo/. A instalação no LAMP usa `sudo bash bin/install-lamp.sh`, banco `audiocontinuo`, cookie `audiocontinuo_device` e serviço `audiocontinuo-worker`. A configuração privada é gerada no novo clone, sem copiar credenciais nem dados do aplicativo original. Consulte o [README](README.md) para operação e testes.
 
+Estado desta entrega: implementação e testes concluídos, commit local `6c71da1`. A ativação no LAMP ainda depende de o administrador executar o instalador: o `sudo` deste servidor exige autenticação local. Depois, verificar `php bin/doctor.php`, o serviço e uma gravação pela URL pública. O AudioServ original permanece ativo e seu diretório não foi modificado.
+
 ## Comportamento implementado
 
 - Mouse, toque e Espaço/Enter com foco no botão iniciam a captura ao pressionar e a encerram ao soltar. Captura de ponteiro garante a soltura mesmo fora do botão.
@@ -36,7 +38,7 @@ O backend continua em PHP; Python serve apenas para testes. O `whisper-cli` e os
 
 `node tests/worklet.cjs` passou com continuidade a 16/44,1/48 kHz, trechos independentes, fragmento final e limite rígido de memória. `tests/integration.py` passou com WAV/CSRF, ordem, idempotência concorrente, isolamento, GPU real Small/Large v3, FIFO, SSE, quotas concorrentes e globais e recuperação de lease. `tests/browser.py` passou com soltura antes da permissão, envio enquanto pressionado, soltura fora do botão, fragmento final, teclado, toque, foco, responsividade e aviso falado único no limite.
 
-QA usa `var/qa`, banco `audiocontinuo_test`, container `audiocontinuo-qa-mysql`, MySQL em `127.0.0.1:33080` e Apache em `127.0.0.1:8098`. O container já foi criado; para reutilizar, use `docker start`. Os testes iniciam seus próprios workers da base isolada. Configuração e arquivos de teste ficam fora do Git.
+QA usa `var/qa`, banco `audiocontinuo_test`, container `audiocontinuo-qa-mysql`, MySQL em `127.0.0.1:33080` e Apache em `127.0.0.1:8098`. O Apache de QA e o container foram encerrados depois dos testes. O container já foi criado; para reutilizar, use `docker start`. Os testes iniciam seus próprios workers da base isolada. Configuração e arquivos de teste ficam fora do Git.
 
 ## Operação e limites
 
