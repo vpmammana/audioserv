@@ -4,6 +4,8 @@ Gravação e upload assíncronos, transcrição local com Whisper na GPU e respo
 
 Endereço de implantação: **https://host.simserv.com.br/audioserv/**. Instalado no LAMP deste servidor em 26/10/2026; os passos abaixo permitem reinstalar a configuração.
 
+Para continuidade do desenvolvimento, consulte o [handoff operacional](HANDOFF.md), com o estado da implantação, decisões, testes e localização dos componentes.
+
 Validação concluída: MySQL nativo 8.0.46, Apache/PHP 8.3, worker systemd ativo e transcrições reais dos dois modelos recebidas por SSE pelo domínio público. Os envios de teste receberam os números 10001 e 10002 e pertencem a um dispositivo de teste separado. Gravação pelo navegador, temas, interface móvel e recuperação de falhas passaram nos testes automatizados. A instância isolada de QA foi parada após a validação; o serviço principal permanece ativo.
 
 ## Instalar no LAMP existente
