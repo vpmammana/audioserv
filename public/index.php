@@ -13,10 +13,11 @@ header('Cache-Control: no-cache');
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#f7f8fa">
   <meta name="description" content="Grave, envie e transforme sua voz em texto com Whisper no seu servidor.">
-  <title>AudioServ · Estúdio de transcrição</title>
+  <title>Áudio Contínuo · Pressione e fale</title>
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/app.css?v=<?= filemtime(__DIR__ . '/assets/app.css') ?>">
   <script src="assets/theme.js?v=<?= filemtime(__DIR__ . '/assets/theme.js') ?>"></script>
+  <script src="assets/capture.js?v=<?= filemtime(__DIR__ . '/assets/capture.js') ?>" data-worklet="assets/capture-worklet.js?v=<?= filemtime(__DIR__ . '/assets/capture-worklet.js') ?>" defer></script>
   <script src="assets/app.js?v=<?= filemtime(__DIR__ . '/assets/app.js') ?>" defer></script>
 </head>
 <body>
@@ -35,7 +36,7 @@ header('Cache-Control: no-cache');
 </svg>
 <div class="app-shell">
   <aside class="sidebar" id="sidebar" aria-label="Menu e preferências">
-    <a class="brand" href="./" aria-label="AudioServ início"><span class="brand-icon"><svg><use href="#i-wave"/></svg></span><span>audio<span class="brand-light">serv</span><small>ESTÚDIO DE TRANSCRIÇÃO</small></span></a>
+    <a class="brand" href="./" aria-label="Áudio Contínuo início"><span class="brand-icon"><svg><use href="#i-wave"/></svg></span><span>áudio<span class="brand-light">contínuo</span><small>PRESSIONE E FALE</small></span></a>
     <div class="workspace-label">SEU ESPAÇO</div>
     <div class="nav-active"><svg><use href="#i-wave"/></svg> Estúdio <span class="nav-dot"></span></div>
     <div class="sidebar-divider"></div>
@@ -56,16 +57,18 @@ header('Cache-Control: no-cache');
   </aside>
   <main class="main">
     <header class="topbar"><div class="breadcrumb">Seu espaço <span>/</span> <strong>Estúdio</strong></div><div class="header-actions"><span class="connection" id="connection"><i></i><span>Conectando</span></span><button class="icon-button" id="theme" aria-label="Alternar tema" title="Alternar tema"><svg><use href="#i-moon"/></svg></button><button class="icon-button mobile-settings" id="settings-toggle" aria-expanded="false" aria-controls="sidebar" aria-label="Abrir preferências"><svg><use href="#i-settings"/></svg></button></div></header>
-    <section class="studio-header"><div><div class="eyebrow">DA VOZ À PALAVRA</div><h1>Estúdio de transcrição<span>.</span></h1><p>Grave uma ideia. Continue a conversa. O texto chega por aqui.</p></div><span class="queue-pill" id="queue-pill"><span class="live-dot"></span><span>Fila livre</span></span></section>
+    <section class="studio-header"><div><div class="eyebrow">SUA VOZ, TRECHO A TRECHO</div><h1>Pressione. Fale. Solte<span>.</span></h1><p>Segure o botão para falar. Os trechos viram texto enquanto você continua.</p></div><span class="queue-pill" id="queue-pill"><span class="live-dot"></span><span>Fila livre</span></span></section>
     <div id="service-notice" class="notice" role="status" hidden></div>
+    <div id="limit-notice" class="notice limit-notice" role="alert" hidden>Limite de tempo alcançado. Aguarde a fila diminuir para falar novamente.</div>
     <section class="conversation" id="conversation" aria-label="Áudios e transcrições">
       <button class="history-button" id="load-more" hidden>Carregar áudios anteriores</button>
-      <div class="empty-state" id="empty-state"><div class="voice-orbit"><svg><use href="#i-wave"/></svg><span class="orbit-dot"></span></div><span class="empty-kicker">PRONTO PARA OUVIR</span><h2>O próximo texto começa<br>com a sua voz.</h2><p>Grave pelo microfone ou envie um arquivo.<br>Você pode gravar de novo enquanto a transcrição fica pronta.</p><div class="steps"><span><b>1</b> Grave ou envie</span><i></i><span><b>2</b> Acompanhe</span><i></i><span><b>3</b> Copie o texto</span></div></div>
+      <div class="empty-state" id="empty-state"><div class="voice-orbit"><svg><use href="#i-wave"/></svg><span class="orbit-dot"></span></div><span class="empty-kicker">SEU WALKIE-TALKIE DE TEXTO</span><h2>Uma conversa contínua.<br>Uma ideia de cada vez.</h2><p>Enquanto você segura, o áudio é enviado em trechos.<br>Ao soltar, a captura para e o último trecho é concluído.</p><div class="steps"><span><b>1</b> Segure</span><i></i><span><b>2</b> Fale</span><i></i><span><b>3</b> Leia o texto</span></div></div>
       <div id="messages" class="messages"></div>
     </section>
     <footer class="composer-area">
-      <div class="recorder" id="recorder"><div class="record-info"><span class="mic-badge"><svg><use href="#i-mic"/></svg></span><div><strong id="record-label">Tudo pronto para gravar</strong><span id="record-hint">Seu microfone só é ativado ao começar.</span></div></div><div class="record-wave"><canvas id="waveform" width="180" height="40" aria-hidden="true"></canvas><time id="timer">00:00</time></div><button class="record-button" id="record" disabled><svg><use href="#i-mic"/></svg><span>Começar gravação</span></button></div>
-      <div class="composer-meta"><button class="text-button" id="choose-file" disabled><svg><use href="#i-upload"/></svg> Enviar arquivo</button><input type="file" id="file" accept="audio/*,.webm,.ogg,.wav,.mp3,.m4a,.mp4,.flac" multiple hidden><span id="limits">Até 20 minutos por áudio · 100 MB</span><span class="model-indicator" id="model-indicator">Whisper</span></div>
+      <div class="queue-capacity"><div><label for="queue-meter">Áudio aguardando transcrição</label><span id="queue-size">0 / 4 MiB</span></div><progress id="queue-meter" max="4194304" value="0"></progress></div>
+      <div class="recorder" id="recorder"><div class="record-info"><span class="mic-badge"><svg><use href="#i-mic"/></svg></span><div><strong id="record-label">Segure para começar</strong><span id="record-hint">Soltou, parou. O último trecho também é enviado.</span></div></div><div class="record-wave"><canvas id="waveform" width="180" height="40" aria-hidden="true"></canvas><time id="timer">00:00</time></div><button class="record-button" id="record" aria-pressed="false" aria-describedby="record-hint" disabled><svg><use href="#i-mic"/></svg><span>Segure para falar</span></button></div>
+      <div class="composer-meta"><span id="limits">Trechos de até 10 s · fila de até 4 MiB</span><span class="keyboard-help">Teclado: segure Espaço ou Enter no botão</span><span class="model-indicator" id="model-indicator">Whisper</span></div>
     </footer>
   </main>
 </div>

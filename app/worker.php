@@ -129,7 +129,7 @@ function fail_job(array $job, Throwable $error): void
         emit_event((int) $job['id'], $state, $message);
         db()->commit();
     } catch (Throwable $e) { db()->rollBack(); throw $e; }
-    error_log('AudioServ job ' . $job['id'] . ': ' . $code . ($retry ? ' (retry)' : ' (failed)'));
+    error_log('Áudio Contínuo job ' . $job['id'] . ': ' . $code . ($retry ? ' (retry)' : ' (failed)'));
 }
 
 function process_job(array $job, ?string $gpu): void
@@ -157,7 +157,7 @@ function process_job(array $job, ?string $gpu): void
         if ($converted['exit'] !== 0 || !is_file($wav)) throw new JobFailure('invalid_audio', 'Este arquivo não contém um áudio válido ou está corrompido.');
         $probe = run_process(['/usr/bin/ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', $wav], 10, $tick);
         $duration = (float) trim($probe['out']);
-        if ($duration > $c['max_duration_seconds']) throw new JobFailure('too_long', 'O áudio ultrapassa o limite de 20 minutos.');
+        if ($duration > $c['max_duration_seconds']) throw new JobFailure('too_long', 'O trecho ultrapassa o limite de duração permitido.');
         if ($duration < 0.1) throw new JobFailure('too_short', 'O áudio é curto demais para transcrever.');
         db()->beginTransaction();
         lock_device((int) $job['device_id']);

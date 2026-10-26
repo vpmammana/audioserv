@@ -19,22 +19,22 @@ chmod 750 "$APP_ROOT/config"
 php "$APP_ROOT/bin/install-database.php"
 chown "$APP_OWNER":www-data "$APP_ROOT/config/local.php"
 chmod 640 "$APP_ROOT/config/local.php"
-if [[ -f /etc/apache2/conf-available/audioserv.conf ]] && ! grep -q 'Managed by AudioServ' /etc/apache2/conf-available/audioserv.conf; then
-    echo 'Já existe configuração Apache audioserv não gerenciada por este projeto. Revise antes de instalar.'
+if [[ -f /etc/apache2/conf-available/audiocontinuo.conf ]] && ! grep -q 'Managed by Áudio Contínuo' /etc/apache2/conf-available/audiocontinuo.conf; then
+    echo 'Já existe configuração Apache audiocontinuo não gerenciada por este projeto. Revise antes de instalar.'
     exit 1
 fi
-cat > /etc/apache2/conf-available/audioserv.conf <<CONF
-# Managed by AudioServ: $APP_ROOT
-RedirectMatch 301 ^/audioserv$ /audioserv/
-Alias /audioserv/ $APP_ROOT/public/
+cat > /etc/apache2/conf-available/audiocontinuo.conf <<CONF
+# Managed by Áudio Contínuo: $APP_ROOT
+RedirectMatch 301 ^/audiocontinuo$ /audiocontinuo/
+Alias /audiocontinuo/ $APP_ROOT/public/
 <Directory $APP_ROOT/public>
     Options -Indexes -FollowSymLinks
     AllowOverride None
     Require all granted
     DirectoryIndex index.php
-    LimitRequestBody 106954752
-    php_admin_value upload_max_filesize 100M
-    php_admin_value post_max_size 102M
+    LimitRequestBody 1048576
+    php_admin_value upload_max_filesize 1M
+    php_admin_value post_max_size 1M
     php_admin_value max_execution_time 60
     php_admin_value memory_limit 256M
     php_admin_flag display_errors Off
@@ -43,14 +43,14 @@ Alias /audioserv/ $APP_ROOT/public/
     SetEnv no-gzip 1
 </Directory>
 CONF
-if [[ -f /etc/systemd/system/audioserv-worker.service ]] && ! grep -q 'Managed by AudioServ' /etc/systemd/system/audioserv-worker.service; then
-    echo 'Já existe serviço audioserv-worker não gerenciado por este projeto. Revise antes de instalar.'
+if [[ -f /etc/systemd/system/audiocontinuo-worker.service ]] && ! grep -q 'Managed by Áudio Contínuo' /etc/systemd/system/audiocontinuo-worker.service; then
+    echo 'Já existe serviço audiocontinuo-worker não gerenciado por este projeto. Revise antes de instalar.'
     exit 1
 fi
-cat > /etc/systemd/system/audioserv-worker.service <<UNIT
-# Managed by AudioServ: $APP_ROOT
+cat > /etc/systemd/system/audiocontinuo-worker.service <<UNIT
+# Managed by Áudio Contínuo: $APP_ROOT
 [Unit]
-Description=AudioServ Whisper GPU queue worker
+Description=Áudio Contínuo Whisper GPU queue worker
 After=mysql.service network.target
 StartLimitIntervalSec=0
 
@@ -76,13 +76,13 @@ TasksMax=128
 [Install]
 WantedBy=multi-user.target
 UNIT
-a2enconf audioserv >/dev/null
+a2enconf audiocontinuo >/dev/null
 if ! apache2ctl configtest; then
-    a2disconf audioserv >/dev/null
+    a2disconf audiocontinuo >/dev/null
     echo 'A configuração não foi aplicada. Corrija o erro acima e execute novamente.'
     exit 1
 fi
 systemctl reload apache2
 systemctl daemon-reload
-systemctl enable --now audioserv-worker
-echo 'AudioServ instalado em /audioserv/. Consulte: systemctl status audioserv-worker'
+systemctl enable --now audiocontinuo-worker
+echo 'Áudio Contínuo instalado em /audiocontinuo/. Consulte: systemctl status audiocontinuo-worker'

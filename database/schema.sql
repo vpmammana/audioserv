@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS audio_files (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     device_id BIGINT UNSIGNED NOT NULL,
     request_id CHAR(36) CHARACTER SET ascii NOT NULL,
+    recording_id CHAR(36) CHARACTER SET ascii NOT NULL,
+    chunk_number INT UNSIGNED NOT NULL,
     storage_key VARCHAR(80) CHARACTER SET ascii NOT NULL UNIQUE,
     original_name VARCHAR(180) NOT NULL,
     mime_type VARCHAR(80) CHARACTER SET ascii NOT NULL,
@@ -47,9 +49,16 @@ CREATE TABLE IF NOT EXISTS audio_files (
     duration_ms INT UNSIGNED NULL,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY device_request (device_id, request_id),
+    UNIQUE KEY recording_chunk (device_id, recording_id, chunk_number),
     KEY device_created (device_id, created_at),
     CONSTRAINT audio_device_fk FOREIGN KEY (device_id) REFERENCES client_devices(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Serializes admission checks across devices without serializing transcriptions.
+CREATE TABLE IF NOT EXISTS queue_admission (
+    id TINYINT UNSIGNED NOT NULL PRIMARY KEY
+) ENGINE=InnoDB;
+INSERT IGNORE INTO queue_admission (id) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS transcription_jobs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

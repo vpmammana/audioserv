@@ -1,8 +1,8 @@
 (() => {
   let saved, chatSize;
   try {
-    saved = localStorage.getItem('audioserv.theme');
-    chatSize = localStorage.getItem('audioserv.chat-size');
+    saved = localStorage.getItem('audiocontinuo.theme');
+    chatSize = localStorage.getItem('audiocontinuo.chat-size');
   } catch {}
   document.documentElement.dataset.theme = saved === 'dark' || saved === 'light' ? saved :
     (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');

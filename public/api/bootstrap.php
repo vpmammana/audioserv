@@ -16,5 +16,7 @@ api(function (): void {
     foreach (array_merge($jobs, $active) as $j) $byId[$j['id']] = format_job($j);
     json_response(['csrf' => $d['csrf'], 'cursor' => $cursor, 'jobs' => array_values($byId),
         'has_more' => count($jobs) === 50, 'models' => models(), 'worker' => worker_health(),
-        'limits' => ['bytes' => config()['max_upload_bytes'], 'seconds' => config()['max_duration_seconds']]]);
+        'limits' => ['bytes' => config()['max_upload_bytes'], 'seconds' => config()['max_duration_seconds'],
+            'chunk_seconds' => config()['chunk_seconds'], 'queue_bytes' => config()['queue_bytes_per_device'],
+            'global_queue_bytes' => config()['queue_bytes_global'], 'pcm_bytes_per_second' => 32000]]);
 });

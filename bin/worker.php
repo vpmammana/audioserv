@@ -7,7 +7,7 @@ umask(0007);
 $lock = fopen(config()['storage'] . '/worker.lock', 'c');
 if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) exit("Já existe um worker nesta pasta.\n");
 // The DB lock also prevents another installation from consuming the same queue.
-$lockName = 'audioserv:' . query('SELECT DATABASE()')->fetchColumn();
+$lockName = 'audiocontinuo:' . query('SELECT DATABASE()')->fetchColumn();
 if (!(int) query('SELECT GET_LOCK(?, 0)', [$lockName])->fetchColumn()) exit("Já existe um worker nesta fila.\n");
 $stop = false;
 pcntl_async_signals(true);
@@ -22,7 +22,7 @@ try {
         throw new RuntimeException('GPU NVIDIA indisponível. A fila foi preservada.');
     }
     if (!is_executable(config()['whisper_binary'])) throw new RuntimeException('whisper-cli não encontrado.');
-    fwrite(STDOUT, 'AudioServ worker iniciado; GPU: ' . ($gpu ?: 'CPU') . "\n");
+    fwrite(STDOUT, 'Áudio Contínuo worker iniciado; GPU: ' . ($gpu ?: 'CPU') . "\n");
     $lastMaintenance = 0;
     do {
         if (time() - $lastMaintenance >= 5) {

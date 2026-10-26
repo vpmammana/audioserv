@@ -5,10 +5,13 @@ const uploads = new Map();
 let csrf = '', cursor = 0, settings = null, source = null, reconnectTimer = null, pollTimer = null;
 let recording = null, micStarting = false, sseErrors = 0, fallback = false, pollDelay = 3000;
 let lastHeartbeat = 0, syncing = false, activeUploads = 0, toastTimer, rendered = new Map();
-let workerOnline = false;
-const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('audioserv') : null;
+let workerOnline = false, press = null, limitLatched = false;
+let feedbackContext = null, alarmBuffer = null, alarmReady = null;
+const alarmData = fetch('assets/limite-alcancado.wav').then((r) => { if (!r.ok) throw new Error('Aviso indisponível'); return r.arrayBuffer(); });
+alarmData.catch(() => {});
+const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('audiocontinuo') : null;
 const activeStates = new Set(['queued', 'normalizing', 'transcribing']);
-const store = { get(key) { try { return localStorage.getItem('audioserv.' + key); } catch { return null; } }, set(key, value) { try { localStorage.setItem('audioserv.' + key, value); } catch {} } };
+const store = { get(key) { try { return localStorage.getItem('audiocontinuo.' + key); } catch { return null; } }, set(key, value) { try { localStorage.setItem('audiocontinuo.' + key, value); } catch {} } };
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const use = document.createElementNS(svg.namespaceURI, 'use');
@@ -66,7 +69,8 @@ async function sync(initial = false) {
     for (const job of data.jobs) jobs.set(job.id, job);
     $('load-more').hidden = !data.has_more;
     $('record').disabled = $('model').disabled;
-    $('choose-file').disabled = $('model').disabled;
+    $('limits').textContent = `Trechos de até ${data.limits.chunk_seconds} s · fila de até ${Math.round(data.limits.queue_bytes / 1048576)} MiB`;
+    updateBudget();
     health(data.worker); render(); track();
   } catch (e) {
     connection('Sem conexão', false); notice(e.message);
@@ -111,6 +115,7 @@ function render() {
   $('queue-pill').dataset.active = count > 0;
   $('queue-pill').lastElementChild.textContent = count ? `${count} áudio${count > 1 ? 's' : ''} em andamento` : 'Fila livre';
   $('export').disabled = complete === 0;
+  updateBudget();
   if (nearBottom) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
 }
 function audioMessage(job) {
@@ -118,11 +123,11 @@ function audioMessage(job) {
   const content = element('div', 'message-content');
   const caption = element('div', 'message-caption'); caption.append(element('strong', '', 'Você'), element('time', '', dateLabel(job.created_at)));
   const bubble = element('div', 'audio-bubble'); const top = element('div', 'audio-top');
-  top.append(icon('wave'), element('span', '', 'Áudio ' + job.id), element('span', 'audio-details', job.model_label + (job.duration_ms ? ' · ' + clock(job.duration_ms / 1000) : '')));
+  top.append(icon('wave'), element('span', '', `Trecho ${job.chunk_number} · #${job.id}`), element('span', 'audio-details', job.model_label + (job.duration_ms ? ' · ' + clock(job.duration_ms / 1000) : '')));
   bubble.append(top, element('p', 'audio-name', job.original_name));
   const player = document.createElement('audio'); player.controls = true; player.preload = 'none';
   player.src = 'api/audio.php?id=' + job.id; player.setAttribute('aria-label', 'Ouvir áudio ' + job.id);
-  const statuses = { queued: 'Na fila · você já pode gravar outro', normalizing: 'Preparando áudio ' + job.id,
+  const statuses = { queued: 'Na fila · você pode continuar falando', normalizing: 'Preparando áudio ' + job.id,
     transcribing: 'Tratando áudio ' + job.id + '…', completed: 'Transcrição concluída', failed: 'Não foi possível tratar este áudio' };
   const status = element('div', 'job-status', job.error_message && job.status === 'queued' ? job.error_message : statuses[job.status]);
   status.dataset.state = job.status; bubble.append(player, status); content.append(caption, bubble); root.append(content); return root;
@@ -146,9 +151,9 @@ function resultMessage(job) {
 function uploadMessage(upload) {
   const root = element('article', 'message message-user'); const content = element('div', 'message-content');
   const caption = element('div', 'message-caption'); caption.append(element('strong', '', 'Você'), element('time', '', localTime(upload.created)));
-  const bubble = element('div', 'audio-bubble'); const top = element('div', 'audio-top'); top.append(icon('upload'), element('span', '', 'Novo áudio'));
+  const bubble = element('div', 'audio-bubble'); const top = element('div', 'audio-top'); top.append(icon('upload'), element('span', '', `Trecho ${upload.chunkNumber}`));
   bubble.append(top, element('p', 'audio-name', upload.name));
-  const label = upload.state === 'failed' ? upload.error : upload.state === 'waiting' ? 'Aguardando envio…' : upload.progress < 100 ? `Enviando ${upload.progress}% · pode gravar outro` : 'Confirmando recebimento no servidor…';
+  const label = upload.state === 'failed' ? upload.error : upload.state === 'waiting' ? 'Aguardando envio…' : upload.progress < 100 ? `Enviando ${upload.progress}% · a captura continua` : 'Confirmando recebimento no servidor…';
   const status = element('div', 'job-status', label); status.dataset.state = upload.state; bubble.append(status);
   if (upload.state === 'failed') {
     const actions = element('div', 'upload-actions');
@@ -158,91 +163,135 @@ function uploadMessage(upload) {
   }
   content.append(caption, bubble); root.append(content); return root;
 }
-function enqueue(blob, name, preferences) {
-  if (blob.size > settings.limits.bytes) { toast('O arquivo ultrapassa o limite de 100 MB.'); return; }
-  if (blob.size < 128) { toast('O áudio está vazio ou é curto demais.'); return; }
+function enqueue(blob, session, chunkNumber) {
   const id = crypto.randomUUID();
-  uploads.set(id, { id, blob, name, preferences, created: new Date().toISOString(), progress: 0, state: 'waiting' });
+  uploads.set(id, { id, blob, name: `Trecho ${chunkNumber} - ${session.id.slice(0, 8)}.wav`,
+    preferences: session.preferences, recordingId: session.id, chunkNumber,
+    created: new Date().toISOString(), progress: 0, state: 'waiting' });
   render(); pumpUploads();
 }
 function pumpUploads() {
   if (!navigator.onLine) return;
   for (const upload of uploads.values()) {
-    if (activeUploads >= 2) break;
+    if (activeUploads >= 1 || upload.state === 'failed') break;
     if (upload.state === 'waiting') { activeUploads++; upload.state = 'sending'; sendUpload(upload); }
   }
 }
 function sendUpload(upload) {
   const form = new FormData(); form.append('audio', upload.blob, upload.name); form.append('request_id', upload.id);
+  form.append('recording_id', upload.recordingId); form.append('chunk_number', upload.chunkNumber);
   form.append('model', upload.preferences.model); form.append('language', upload.preferences.language);
   const xhr = new XMLHttpRequest(); xhr.open('POST', 'api/upload.php'); xhr.setRequestHeader('X-CSRF-Token', csrf); xhr.timeout = 180000;
   let finished = false;
-  const finish = (error, data) => {
+  const finish = (error, data, code) => {
     if (finished) return; finished = true; activeUploads--;
-    if (error) { upload.state = 'failed'; upload.error = error; announce('Falha no envio. O áudio está disponível para reenviar ou salvar.'); }
+    if (error) { upload.state = 'failed'; upload.error = error; if (code === 'queue_limit') limitReached(); else endHold(); announce('Falha no envio. O áudio está disponível para reenviar ou salvar.'); }
     else { uploads.delete(upload.id); jobs.set(data.job.id, data.job); announce('Áudio ' + data.job.id + ' recebido.'); channel?.postMessage('changed'); }
     render(); track(); pumpUploads();
   };
   xhr.upload.onprogress = (e) => { if (e.lengthComputable) { upload.progress = Math.round(e.loaded / e.total * 100); render(); } };
   xhr.onload = () => { let data; try { data = JSON.parse(xhr.responseText); } catch { finish('O servidor não confirmou o envio. Tente reenviar.'); return; }
     if (xhr.status >= 200 && xhr.status < 300 && data.job) finish(null, data);
-    else finish(data.error || 'Falha no envio. Tente novamente.'); };
+    else finish(data.error || 'Falha no envio. Tente novamente.', null, data.code); };
   xhr.onerror = () => finish('Sem conexão. Seu áudio continua aqui para reenviar ou salvar.');
   xhr.ontimeout = () => finish('O envio demorou demais. Tente reenviar; o áudio não será duplicado.');
   xhr.onabort = () => finish('O envio foi interrompido.'); xhr.send(form);
 }
 function preferences() { return { model: $('model').value, language: $('language').value }; }
-async function startRecording() {
-  if (micStarting) return;
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) { toast('Abra a página por HTTPS ou localhost para usar o microfone.'); return; }
-  if (!window.MediaRecorder) { toast('Este navegador não permite gravação. Você pode enviar um arquivo.'); return; }
-  micStarting = true; $('record').disabled = true; $('record-label').textContent = 'Aguardando permissão do microfone…';
-  let stream;
-  try {
-    const prefs = preferences();
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
-    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm'].find((type) => MediaRecorder.isTypeSupported(type));
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 96000 } : undefined);
-    const session = { recorder, stream, chunks: [], size: 0, started: performance.now(), preferences: prefs, context: null, frame: null };
-    recording = session;
-    recorder.ondataavailable = (e) => { if (e.data.size) { session.chunks.push(e.data); session.size += e.data.size; if (session.size >= settings.limits.bytes - 1024 * 1024 && recorder.state === 'recording') stopRecording(); } };
-    recorder.onerror = () => { toast('A gravação foi interrompida. Tentaremos enviar o trecho capturado.'); if (recorder.state !== 'inactive') recorder.stop(); else finalizeRecording(session); };
-    recorder.onstop = () => finalizeRecording(session);
-    stream.getAudioTracks().forEach((track) => { track.onended = () => { if (recorder.state === 'recording') stopRecording(); }; });
-    recorder.start(1000);
-    session.interval = setInterval(() => { const elapsed = (performance.now() - session.started) / 1000; $('timer').textContent = clock(elapsed); if (elapsed >= settings.limits.seconds) { toast('Limite de tempo atingido. Enviando áudio.'); stopRecording(); } }, 250);
-    $('recorder').classList.add('is-recording'); $('record-label').textContent = 'Gravando sua voz'; $('record-hint').textContent = 'Ao parar, o áudio é enviado automaticamente.';
-    $('record').replaceChildren(icon('upload'), document.createTextNode('Parar e enviar'));
-    try {
-      session.context = new AudioContext(); const analyser = session.context.createAnalyser(); analyser.fftSize = 256;
-      session.context.createMediaStreamSource(stream).connect(analyser); session.analyser = analyser; drawWave(session);
-    } catch { /* Recording remains available when visualisation is unsupported. */ }
-    announce('Gravação iniciada.');
-  } catch (e) {
-    stream?.getTracks().forEach((track) => track.stop()); recording = null; resetRecorder();
-    toast(e.name === 'NotAllowedError' ? 'Permita o acesso ao microfone nas configurações do navegador.' : e.name === 'NotFoundError' ? 'Nenhum microfone foi encontrado.' : 'Não foi possível iniciar a gravação. Você pode enviar um arquivo.');
-  } finally { micStarting = false; $('record').disabled = false; }
+function outstandingBytes() {
+  const known = new Set([...jobs.values()].map((j) => j.request_id));
+  let bytes = [...jobs.values()].filter((j) => activeStates.has(j.status)).reduce((n, j) => n + j.byte_size, 0);
+  for (const upload of uploads.values()) if (!known.has(upload.id)) bytes += upload.blob.size;
+  return bytes;
 }
-function stopRecording() { if (recording?.recorder.state === 'recording') { $('record').disabled = true; recording.recorder.stop(); } }
-function finalizeRecording(session) {
-  if (session.finished) return; session.finished = true;
-  clearInterval(session.interval); cancelAnimationFrame(session.frame); session.stream.getTracks().forEach((track) => track.stop()); session.context?.close().catch(() => {});
-  const type = session.recorder.mimeType || session.chunks[0]?.type || 'audio/webm';
-  const blob = new Blob(session.chunks, { type }); const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-  recording = null; resetRecorder();
-  enqueue(blob, 'Gravação ' + new Date().toLocaleString('pt-BR').replaceAll('/', '-') + '.' + ext, session.preferences);
+function captureBudget() { return Math.max(0, (settings?.limits.queue_bytes || 0) - outstandingBytes() - 4096); }
+function updateBudget() {
+  if (!settings) return;
+  const bytes = outstandingBytes() + (recording?.capture.bufferedBytes || 0);
+  const max = settings.limits.queue_bytes;
+  $('queue-meter').max = max; $('queue-meter').value = Math.min(bytes, max);
+  $('queue-size').textContent = `${(bytes / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} / ${(max / 1048576).toLocaleString('pt-BR')} MiB · ~${clock(bytes / 32000)}`;
+  recording?.capture.setBudget();
+}
+function armFeedback() {
+  try {
+    if (!feedbackContext || feedbackContext.state === 'closed') feedbackContext = new AudioContext();
+    const resumed = feedbackContext.resume();
+    if (!alarmReady) alarmReady = alarmData.then((data) => feedbackContext.decodeAudioData(data.slice(0))).then((buffer) => { alarmBuffer = buffer; });
+    return Promise.all([resumed, alarmReady]).catch(() => {});
+  } catch { return Promise.resolve(); }
+}
+function limitReached() {
+  endHold();
+  if (limitLatched) return;
+  limitLatched = true;
+  $('limit-notice').hidden = false;
+  announce('Limite de tempo alcançado.');
+  armFeedback().then(() => {
+    if (alarmBuffer && feedbackContext?.state === 'running') {
+      const sound = feedbackContext.createBufferSource(); sound.buffer = alarmBuffer;
+      sound.connect(feedbackContext.destination); sound.start();
+    } else if ('speechSynthesis' in window) {
+      const speech = new SpeechSynthesisUtterance('Limite de tempo alcançado.'); speech.lang = 'pt-BR'; speechSynthesis.speak(speech);
+    }
+  });
+}
+function beginHold(interaction) {
+  if (press || recording || !settings || $('record').disabled) return;
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) { toast('Abra em HTTPS e use um navegador com captura de áudio compatível.'); return; }
+  if (!navigator.onLine) { toast('Reconecte à internet antes de falar.'); return; }
+  if ([...uploads.values()].some((u) => u.state === 'failed')) { toast('Reenvie o trecho que falhou antes de começar outra gravação.'); return; }
+  press = interaction; limitLatched = false; $('limit-notice').hidden = true; armFeedback();
+  if (captureBudget() < 3244) { limitReached(); return; }
+  const session = { id: crypto.randomUUID(), preferences: preferences(), capture: null };
+  session.capture = new ContinuousCapture({
+    chunkSeconds: settings.limits.chunk_seconds, budget: captureBudget,
+    onStarted: () => {
+      if (recording !== session || !press) { session.capture.stop(); return; }
+      micStarting = false; $('recorder').classList.add('is-recording');
+      $('record-label').textContent = 'Gravando e enviando em trechos';
+      $('record-hint').textContent = 'Mantenha pressionado. Solte para encerrar a captura.';
+      announce('Gravação contínua iniciada.');
+    },
+    onChunk: (blob, number) => enqueue(blob, session, number),
+    onProgress: (data) => { if (recording !== session) return; $('timer').textContent = clock(data.frames / 16000); drawLevel(data.level); updateBudget(); },
+    onError: (error) => toast(error.name === 'NotAllowedError' ? 'Permita o microfone e segure o botão novamente.' : 'Não foi possível manter a captura. Verifique o microfone.'),
+    onStopped: (reason) => {
+      if (recording !== session) return;
+      if (reason === 'limit') limitReached();
+      recording = null; micStarting = false; releasePress(); resetRecorder(); updateBudget();
+    },
+  });
+  recording = session; micStarting = true;
+  $('record').setAttribute('aria-pressed', 'true');
+  $('record').replaceChildren(icon('mic'), document.createTextNode('Solte para parar'));
+  $('record-label').textContent = 'Preparando microfone…';
+  session.capture.start();
+}
+function releasePress() {
+  const old = press; press = null;
+  if (old?.pointerId !== undefined && $('record').hasPointerCapture(old.pointerId)) $('record').releasePointerCapture(old.pointerId);
+  $('record').setAttribute('aria-pressed', 'false');
+}
+function endHold() {
+  releasePress();
+  if (!recording) return;
+  $('record-label').textContent = 'Concluindo o último trecho…';
+  $('recorder').classList.remove('is-recording');
+  recording.capture.stop();
 }
 function resetRecorder() {
-  $('recorder').classList.remove('is-recording'); $('record-label').textContent = 'Tudo pronto para gravar'; $('record-hint').textContent = 'Seu microfone só é ativado ao começar.';
-  $('timer').textContent = '00:00'; $('record').replaceChildren(icon('mic'), document.createTextNode('Começar gravação')); $('record').disabled = false; idleWave();
+  $('recorder').classList.remove('is-recording'); $('record-label').textContent = 'Segure para começar';
+  $('record-hint').textContent = 'Soltou, parou. O último trecho também é enviado.';
+  $('timer').textContent = '00:00'; $('record').setAttribute('aria-pressed', 'false');
+  $('record').replaceChildren(icon('mic'), document.createTextNode('Segure para falar')); idleWave();
 }
-function idleWave() { const ctx = $('waveform').getContext('2d'); ctx.clearRect(0, 0, 180, 40); ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted'); ctx.lineWidth = 2; for (let x = 5; x < 180; x += 8) { ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, 22); ctx.stroke(); } }
-function drawWave(session) {
-  if (recording !== session) return;
-  const bytes = new Uint8Array(session.analyser.frequencyBinCount); session.analyser.getByteTimeDomainData(bytes);
-  const ctx = $('waveform').getContext('2d'); ctx.clearRect(0, 0, 180, 40); ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--red'); ctx.lineWidth = 2; ctx.beginPath();
-  bytes.forEach((v, i) => { const x = i / bytes.length * 180; const y = v / 255 * 40; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); session.frame = requestAnimationFrame(() => drawWave(session));
+function drawLevel(level = 0) {
+  const ctx = $('waveform').getContext('2d'); ctx.clearRect(0, 0, 180, 40);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue(recording ? '--red' : '--muted'); ctx.lineWidth = 2;
+  for (let x = 5; x < 180; x += 8) { const h = Math.min(18, 2 + level * 150 * (.5 + Math.abs(Math.sin(x)))); ctx.beginPath(); ctx.moveTo(x, 20 - h); ctx.lineTo(x, 20 + h); ctx.stroke(); }
 }
+function idleWave() { drawLevel(); }
 function closeStream() { source?.close(); source = null; clearTimeout(reconnectTimer); reconnectTimer = null; }
 function stopTracking() { closeStream(); clearTimeout(pollTimer); pollTimer = null; }
 function consume(event) {
@@ -274,9 +323,22 @@ async function poll() {
   track();
 }
 function download(blob, name) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); }
-$('record').onclick = () => recording ? stopRecording() : startRecording();
-$('choose-file').onclick = () => $('file').click();
-$('file').onchange = () => { for (const file of $('file').files) enqueue(file, file.name, preferences()); $('file').value = ''; };
+$('record').addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || !event.isPrimary) return;
+  event.preventDefault(); $('record').focus();
+  beginHold({ pointerId: event.pointerId });
+  if (press?.pointerId === event.pointerId) $('record').setPointerCapture(event.pointerId);
+});
+window.addEventListener('pointerup', (event) => { if (press?.pointerId === event.pointerId) endHold(); }, true);
+window.addEventListener('pointercancel', (event) => { if (press?.pointerId === event.pointerId) endHold(); }, true);
+$('record').addEventListener('lostpointercapture', (event) => { if (press?.pointerId === event.pointerId) endHold(); });
+$('record').addEventListener('contextmenu', (event) => event.preventDefault());
+$('record').addEventListener('keydown', (event) => {
+  if (!['Space', 'Enter'].includes(event.code)) return;
+  event.preventDefault(); if (!event.repeat) beginHold({ key: event.code });
+});
+window.addEventListener('keyup', (event) => { if (press?.key === event.code) { event.preventDefault(); endHold(); } });
+window.addEventListener('blur', endHold);
 $('model').onchange = applyModel; $('language').onchange = () => store.set('language', $('language').value);
 $('chat-size').value = document.documentElement.dataset.chatSize || 'medium';
 $('chat-size').onchange = () => {
@@ -286,19 +348,19 @@ $('chat-size').onchange = () => {
 $('theme').onclick = () => { const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; store.set('theme', theme); themeLabel(); idleWave(); };
 function themeLabel() { const dark = document.documentElement.dataset.theme === 'dark'; $('theme').replaceChildren(icon(dark ? 'sun' : 'moon')); $('theme').setAttribute('aria-label', dark ? 'Usar tema claro' : 'Usar tema escuro'); document.querySelector('meta[name=theme-color]').content = dark ? '#10141c' : '#f7f8fa'; }
 $('settings-toggle').onclick = () => { const open = $('sidebar').classList.toggle('open'); $('settings-toggle').setAttribute('aria-expanded', open); if (open) $('model').focus(); };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('sidebar').classList.remove('open'); $('settings-toggle').setAttribute('aria-expanded', false); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { endHold(); $('sidebar').classList.remove('open'); $('settings-toggle').setAttribute('aria-expanded', false); } });
 document.addEventListener('click', (e) => { if (!$('sidebar').contains(e.target) && !$('settings-toggle').contains(e.target)) { $('sidebar').classList.remove('open'); $('settings-toggle').setAttribute('aria-expanded', false); } });
-$('export').onclick = () => { const text = [...jobs.values()].filter((j) => j.status === 'completed').sort((a, b) => a.id - b.id).map((j) => `Áudio ${j.id} · ${j.model_label} · ${dateLabel(j.created_at)}\n\n${j.text || '(Nenhuma fala identificada)'}`).join('\n\n--------------------\n\n'); download(new Blob([text], { type: 'text/plain;charset=utf-8' }), 'audioserv-transcricoes.txt'); };
+$('export').onclick = () => { const text = [...jobs.values()].filter((j) => j.status === 'completed').sort((a, b) => a.id - b.id).map((j) => `Áudio ${j.id} · ${j.model_label} · ${dateLabel(j.created_at)}\n\n${j.text || '(Nenhuma fala identificada)'}`).join('\n\n--------------------\n\n'); download(new Blob([text], { type: 'text/plain;charset=utf-8' }), 'audiocontinuo-transcricoes.txt'); };
 $('load-more').onclick = async () => {
   $('load-more').disabled = true; const scroller = $('conversation'), height = scroller.scrollHeight;
   try { const data = await api('history.php?before=' + Math.min(...jobs.keys())); for (const job of data.jobs) jobs.set(job.id, job); $('load-more').hidden = !data.has_more; render(); requestAnimationFrame(() => { scroller.scrollTop += scroller.scrollHeight - height; }); }
   catch (e) { toast(e.message); } finally { $('load-more').disabled = false; }
 };
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopTracking(); else { fallback = false; sseErrors = 0; sync(); } });
-window.addEventListener('offline', () => { stopTracking(); connection('Sem conexão', false); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { endHold(); stopTracking(); } else { fallback = false; sseErrors = 0; sync(); } });
+window.addEventListener('offline', () => { endHold(); stopTracking(); connection('Sem conexão', false); });
 window.addEventListener('online', () => { fallback = false; sseErrors = 0; sync(); pumpUploads(); });
 window.addEventListener('beforeunload', (e) => { if (recording || micStarting || uploads.size) { e.preventDefault(); e.returnValue = ''; } });
-window.addEventListener('pagehide', stopTracking);
+window.addEventListener('pagehide', () => { endHold(); stopTracking(); feedbackContext?.close().catch(() => {}); });
 if (channel) channel.onmessage = () => { if (!document.hidden) sync(); };
 setInterval(() => { if (source && Date.now() - lastHeartbeat > 20000) streamFailure(); }, 5000);
 themeLabel(); idleWave(); sync(true);

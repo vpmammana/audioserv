@@ -5,9 +5,9 @@ function config(): array
 {
     static $config;
     if ($config === null) {
-        $file = getenv('AUDIOSERV_CONFIG') ?: dirname(__DIR__) . '/config/local.php';
+        $file = getenv('AUDIOCONTINUO_CONFIG') ?: dirname(__DIR__) . '/config/local.php';
         if (!is_file($file)) {
-            throw new RuntimeException('AudioServ ainda não foi configurado. Execute bin/install-lamp.sh.');
+            throw new RuntimeException('Áudio Contínuo ainda não foi configurado. Execute bin/install-lamp.sh.');
         }
         $config = array_replace(require dirname(__DIR__) . '/config/example.php', require $file);
         if (strlen($config['secret']) < 32) {
@@ -49,7 +49,7 @@ function json_response(array $data, int $status = 200): never
 
 final class HttpError extends RuntimeException
 {
-    public function __construct(public int $status, string $message)
+    public function __construct(public int $status, string $message, public string $errorCode = 'request_error')
     {
         parent::__construct($message);
     }
@@ -64,9 +64,9 @@ function api(callable $callback): never
         $callback();
     } catch (HttpError $e) {
         if (db()->inTransaction()) db()->rollBack();
-        json_response(['error' => $e->getMessage()], $e->status);
+        json_response(['error' => $e->getMessage(), 'code' => $e->errorCode], $e->status);
     } catch (Throwable $e) {
-        error_log('AudioServ: ' . $e->getMessage());
+        error_log('Áudio Contínuo: ' . $e->getMessage());
         json_response(['error' => 'Serviço indisponível. Tente novamente em instantes.'], 503);
     }
     exit;
@@ -82,7 +82,7 @@ function require_method(string $method): void
 
 function device(bool $create = false): array
 {
-    $token = $_COOKIE['audioserv_device'] ?? '';
+    $token = $_COOKIE['audiocontinuo_device'] ?? '';
     $valid = is_string($token) && preg_match('/^[a-f0-9]{64}$/D', $token);
     $hash = $valid ? hash_hmac('sha256', $token, config()['secret']) : '';
     $row = $hash ? query('SELECT * FROM client_devices WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3)', [$hash])->fetch() : false;
@@ -97,7 +97,7 @@ function device(bool $create = false): array
         $secure = config()['cookie_secure'] || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
             (config()['trust_proxy_https'] && ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
         $expires = isset($row['expires_at']) ? (new DateTimeImmutable($row['expires_at'], new DateTimeZone('UTC')))->getTimestamp() : time() + 365 * 86400;
-        setcookie('audioserv_device', $token, [
+        setcookie('audiocontinuo_device', $token, [
             'expires' => $expires, 'path' => config()['base_path'],
             'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax',
         ]);
@@ -148,14 +148,14 @@ function job_select(): string
 {
     return 'SELECT j.id, j.status, j.progress, j.language, j.attempts, j.created_at, j.started_at, j.finished_at,
         j.error_code, j.error_message, a.original_name, a.byte_size, a.duration_ms, a.request_id,
-        m.slug AS model, m.label AS model_label, t.text, t.detected_language, t.processing_ms
+        a.recording_id, a.chunk_number, m.slug AS model, m.label AS model_label, t.text, t.detected_language, t.processing_ms
         FROM transcription_jobs j JOIN audio_files a ON a.id = j.audio_file_id
         JOIN whisper_models m ON m.id = j.model_id LEFT JOIN transcriptions t ON t.job_id = j.id ';
 }
 
 function format_job(array $job): array
 {
-    foreach (['id', 'progress', 'attempts', 'byte_size', 'duration_ms', 'processing_ms'] as $key) {
+    foreach (['id', 'progress', 'attempts', 'byte_size', 'duration_ms', 'processing_ms', 'chunk_number'] as $key) {
         $job[$key] = $job[$key] === null ? null : (int) $job[$key];
     }
     foreach (['created_at', 'started_at', 'finished_at'] as $key) {
