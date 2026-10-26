@@ -2,9 +2,9 @@
 
 Variante do AudioServ criada em 26/10/2026 para gravar enquanto o usuário mantém um botão pressionado, enviar o áudio em trechos e receber transcrições conforme ficam prontas. O projeto está em `/srv/audiocontinuo`, clonado do commit `7eb9b32` de `https://github.com/vpmammana/audioserv.git`, na branch local `audiocontinuo`. O remoto `origin` ainda aponta para o repositório de origem; esta variante não foi enviada à branch `main` do AudioServ.
 
-Destino de implantação: https://host.simserv.com.br/audiocontinuo/. A instalação no LAMP usa `sudo bash bin/install-lamp.sh`, banco `audiocontinuo`, cookie `audiocontinuo_device` e serviço `audiocontinuo-worker`. A configuração privada é gerada no novo clone, sem copiar credenciais nem dados do aplicativo original. Consulte o [README](README.md) para operação e testes.
+Aplicativo em operação: https://host.simserv.com.br/audiocontinuo/. A instalação no LAMP usa `sudo bash bin/install-lamp.sh`, banco `audiocontinuo`, cookie `audiocontinuo_device` e serviço `audiocontinuo-worker`. A configuração privada foi gerada no novo clone, sem copiar credenciais nem dados do aplicativo original. Consulte o [README](README.md) para operação e testes.
 
-Estado desta entrega: implementação e testes concluídos, commit local `6c71da1`. A ativação no LAMP ainda depende de o administrador executar o instalador: o `sudo` deste servidor exige autenticação local. Depois, verificar `php bin/doctor.php`, o serviço e uma gravação pela URL pública. O AudioServ original permanece ativo e seu diretório não foi modificado.
+Estado desta entrega: implementação, instalação e verificação pública concluídas em 26/10/2026. Implementação no commit local `6c71da1`. O administrador executou o instalador; `php bin/doctor.php` confirmou MySQL 8.0.46, worker disponível, RTX 5070 e modelos Small/Large v3. O serviço está habilitado para iniciar com o servidor, ativo e sem reinícios. O AudioServ original permanece ativo e seu diretório não foi modificado.
 
 ## Comportamento implementado
 
@@ -37,6 +37,8 @@ O backend continua em PHP; Python serve apenas para testes. O `whisper-cli` e os
 ## Verificação concluída
 
 `node tests/worklet.cjs` passou com continuidade a 16/44,1/48 kHz, trechos independentes, fragmento final e limite rígido de memória. `tests/integration.py` passou com WAV/CSRF, ordem, idempotência concorrente, isolamento, GPU real Small/Large v3, FIFO, SSE, quotas concorrentes e globais e recuperação de lease. `tests/browser.py` passou com soltura antes da permissão, envio enquanto pressionado, soltura fora do botão, fragmento final, teclado, toque, foco, responsividade e aviso falado único no limite.
+
+Após a instalação, Chromium acessou a URL pública por HTTPS com microfone simulado usando a amostra `jfk.wav`. Manter o botão pressionado enviou o primeiro trecho antes da soltura; soltar fora do botão fechou o último fragmento, preservando sequência e gravação. Uma segunda gravação por teclado usou Large v3. As três tarefas `10001`–`10003` concluíram com o motor `whisper.cpp CUDA`, em 0,8–1,5 s de processamento por trecho nesta amostra. SSE pelo domínio público, reprodução com Range HTTP, arquivo do aviso falado e cookie Secure/HttpOnly restrito ao novo caminho também passaram, sem erros JavaScript. A fila terminou vazia. Evidência local em `var/qa/public-verification.json` e `var/qa/public-deployed.png`; os áudios da amostra pertencem ao dispositivo de teste, separado do navegador do usuário.
 
 QA usa `var/qa`, banco `audiocontinuo_test`, container `audiocontinuo-qa-mysql`, MySQL em `127.0.0.1:33080` e Apache em `127.0.0.1:8098`. O Apache de QA e o container foram encerrados depois dos testes. O container já foi criado; para reutilizar, use `docker start`. Os testes iniciam seus próprios workers da base isolada. Configuração e arquivos de teste ficam fora do Git.
 

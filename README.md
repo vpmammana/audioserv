@@ -4,7 +4,7 @@ Walkie-talkie de transcrição: segure o botão para gravar e enviar trechos à 
 
 Este projeto foi clonado de [vpmammana/audioserv](https://github.com/vpmammana/audioserv), commit `7eb9b32`, para **`/srv/audiocontinuo`**, branch local **`audiocontinuo`**. A instalação tem banco, diretório de dados, cookie e serviço próprios. O AudioServ original continua em `/home/victor/audioserv`.
 
-Destino: **https://host.simserv.com.br/audiocontinuo/**. Veja também [HANDOFF.md](HANDOFF.md).
+Em operação: **https://host.simserv.com.br/audiocontinuo/**. Implantação no LAMP e gravação pelo endereço público verificadas em 26/10/2026. Veja também [HANDOFF.md](HANDOFF.md).
 
 ## Uso
 
